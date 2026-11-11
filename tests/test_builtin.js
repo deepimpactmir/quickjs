@@ -954,6 +954,95 @@ function test_map()
     test_map1("bigint", n);
 }
 
+/* Freeing the last reference to a map iterator removes its current
+   deleted record from the record list. Check that it is safe while
+   the list is traversed by clear() or forEach(). */
+function test_map_iterator_free()
+{
+    var a, s, it, h, tab;
+
+    /* iterator owned by the value of the record before the deleted one */
+    a = new Map([[0, 0], [1, 1], [2, 2]]);
+    it = a.entries();
+    it.next();
+    it.next();
+    a.delete(1);
+    a.set(0, it);
+    it = null;
+    a.clear();
+    assert(a.size, 0);
+    a.set(3, 3);
+    assert(Array.from(a.keys()).toString(), "3");
+
+    /* same case when the deleted record is the last one and when the
+       iterator is indirectly referenced */
+    a = new Map([[0, 0], [1, 1]]);
+    it = a.entries();
+    it.next();
+    it.next();
+    a.delete(1);
+    a.set(0, { x: [ it ] });
+    it = null;
+    a.clear();
+    assert(a.size, 0);
+
+    /* iterator owned by a key (Set case) */
+    h = { };
+    s = new Set([h, 1, 2]);
+    it = s.values();
+    it.next();
+    it.next();
+    s.delete(1);
+    h.it = it;
+    h = it = null;
+    s.clear();
+    assert(s.size, 0);
+    s.add(3);
+    assert(Array.from(s).toString(), "3");
+
+    /* iterator freed with the return value of the forEach() callback */
+    a = new Map([[0, 0], [1, 1], [2, 2]]);
+    tab = [];
+    a.forEach(function (v, k) {
+        var it;
+        tab.push(k);
+        if (k === 0) {
+            it = a.entries();
+            it.next();
+            it.next();
+            a.delete(1);
+            return it;
+        }
+    });
+    assert(tab.toString(), "0,2");
+    assert(a.size, 2);
+
+    s = new Set([0, 1]);
+    tab = [];
+    s.forEach(function (k) {
+        var it;
+        tab.push(k);
+        if (k === 0) {
+            it = s.values();
+            it.next();
+            it.next();
+            s.delete(1);
+            return it;
+        }
+    });
+    assert(tab.toString(), "0");
+    assert(s.size, 1);
+
+    /* an iterator created before clear() is still usable */
+    a = new Map([[0, 0], [1, 1]]);
+    it = a.keys();
+    it.next();
+    a.clear();
+    a.set(2, 2);
+    assert(it.next().value, 2);
+    assert(it.next().done, true);
+}
+
 function test_weak_map()
 {
     var a, i, n, tab, o, v, n2;
@@ -1236,6 +1325,7 @@ test_date();
 test_regexp();
 test_symbol();
 test_map();
+test_map_iterator_free();
 test_weak_map();
 test_weak_map_cycles();
 test_weak_ref();

@@ -55123,7 +55123,7 @@ static JSValue js_map_clear(JSContext *ctx, JSValueConst this_val,
                             int argc, JSValueConst *argv, int magic)
 {
     JSMapState *s = JS_GetOpaque2(ctx, this_val, JS_CLASS_MAP + magic);
-    struct list_head *el, *el1;
+    struct list_head *el;
     JSMapRecord *mr;
 
     if (!s)
@@ -55132,9 +55132,17 @@ static JSValue js_map_clear(JSContext *ctx, JSValueConst this_val,
     /* remove from the hash table */
     memset(s->hash_table, 0, sizeof(s->hash_table[0]) * s->hash_size);
     
-    list_for_each_safe(el, el1, &s->records) {
+    /* Note: freeing the key or the value of a record can free a map
+       iterator which removes its current (deleted) record from the
+       list. So the current record is locked and the next record is
+       only read after the deletion. */
+    el = s->records.next;
+    while (el != &s->records) {
         mr = list_entry(el, JSMapRecord, link);
+        mr->ref_count++;
         map_delete_record_internal(ctx->rt, s, mr);
+        el = el->next;
+        map_decref_record(ctx->rt, mr);
     }
     return JS_UNDEFINED;
 }
@@ -55183,11 +55191,16 @@ static JSValue js_map_forEach(JSContext *ctx, JSValueConst this_val,
             JS_FreeValue(ctx, args[0]);
             if (!magic)
                 JS_FreeValue(ctx, args[1]);
+            if (JS_IsException(ret)) {
+                map_decref_record(ctx->rt, mr);
+                return ret;
+            }
+            /* must be freed while the current record is locked
+               because it can free a map iterator which removes the
+               next (deleted) record from the list */
+            JS_FreeValue(ctx, ret);
             el = el->next;
             map_decref_record(ctx->rt, mr);
-            if (JS_IsException(ret))
-                return ret;
-            JS_FreeValue(ctx, ret);
         } else {
             el = el->next;
         }
